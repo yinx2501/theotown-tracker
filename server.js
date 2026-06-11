@@ -20,7 +20,6 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Hàm đọc/ghi dữ liệu từ file JSON cơ sở dữ liệu
-// THAY THẾ TOÀN BỘ ĐOẠN READDATA VÀ WRITEDATA CŨ BẰNG ĐOẠN NÀY:
 const readData = () => {
     try {
         if (!fs.existsSync(DATA_FILE)) {
@@ -44,29 +43,8 @@ const writeData = (data) => {
 };
 
 // =========================================================================
-// HÀM LÕI CÀO DỮ LIỆU (SCRAPER CORE)
-// Nếu cấu trúc web TheoTown thay đổi, bạn chỉ cần sửa logic trích xuất ở đây.
-// Toàn bộ các API và giao diện quản trị khác bên dưới sẽ được giữ nguyên 100%.
-// =========================================================================
-// =========================================================================
-// HÀM LÕI CÀO DỮ LIỆU ĐÃ ĐƯỢC NÂNG CẤP KHẢ NĂNG CHỐNG CHẶN BOT (ANTI-BOT EVASION)
-// Chỉ thay đổi hàm này, 100% các thành phần khác xung quanh được giữ nguyên.
-// =========================================================================
-// =========================================================================
-// HÀM LÕI CÀO DỮ LIỆU BẰNG BROWSER CHẠY NGẦM (BYPASS CLOUDFLARE/JS CHALLENGE)
-// Đảm bảo giữ nguyên 100% cấu trúc giao tiếp của các hàm và API xung quanh.
-// =========================================================================
-// =========================================================================
-// HÀM LÕI CÀO DỮ LIỆU (ĐÃ SỬA LỖI ĐỨT NGỮ CẢNH DO NAVIGATION)
-// Chỉ chỉnh sửa phần load trang bên dưới, các thành phần khác giữ nguyên 100%
-// =========================================================================
-// =========================================================================
-// HÀM LÕI CÀO DỮ LIỆU ĐÃ SỬA LỖI ĐỌC TRANG DANH SÁCH / TÌM KIẾM THEOTOWN
-// Đảm bảo giữ nguyên vẹn 100% các API kết nối và giao diện xung quanh.
-// =========================================================================
-// =========================================================================
 // HÀM LÕI CÀO DỮ LIỆU ĐÃ ĐƯỢC THÊM BỘ ĐỆM ĐỢI ĐIỀU HƯỚNG TRÁNH SẬP CONTEXT
-// Chỉ thay đổi phần cấu hình chờ tải trang, 100% logic lọc phía dưới giữ nguyên.
+// Đã sửa lỗi đọc thuộc tính trên đối tượng null khi trang tải lỗi/chậm
 // =========================================================================
 async function scrapePluginData(url) {
     let browser;
@@ -93,9 +71,10 @@ async function scrapePluginData(url) {
         // [THAY ĐỔI TẠI ĐÂY]: Đợi thêm 2.5 giây để phòng trường hợp trang web chuyển hướng ngầm/vượt Cloudflare thách thức
         await new Promise(resolve => setTimeout(resolve, 2500));
 
-        // Thực hiện bóc tách thông minh trực tiếp bên trong DOM của Trình duyệt (Giữ nguyên 100%)
+        // Thực hiện bóc tách thông minh trực tiếp bên trong DOM của Trình duyệt (Đã vá lỗi an toàn bằng Optional Chaining)
         const extractedData = await page.evaluate(() => {
-            const bodyTxt = document.body.innerText || "";
+            // SỬA TẠI ĐÂY: Thêm dấu ?. đề phòng document.body bị null khi trang lỗi
+            const bodyTxt = document.body?.innerText || "";
 
             let rating = "N/A";
             let downloads = "N/A";
@@ -122,7 +101,8 @@ async function scrapePluginData(url) {
             let ratingEl = null;
             if (rating !== "N/A") {
                 const allElements = Array.from(document.querySelectorAll('*'));
-                ratingEl = allElements.find(el => el.children.length === 0 && el.innerText && el.innerText.toUpperCase().trim() === rating);
+                // SỬA TẠI ĐÂY: Thêm el?.innerText đề phòng phần tử không có thuộc tính text
+                ratingEl = allElements.find(el => el && el.children && el.children.length === 0 && el.innerText && el?.innerText?.toUpperCase().trim() === rating);
             }
 
             if (ratingEl) {
@@ -130,7 +110,8 @@ async function scrapePluginData(url) {
                 for (let i = 0; i < 5 && parent; i++) {
                     const candidates = parent.querySelectorAll('a, h1, h2, h3, h4');
                     for (let cand of candidates) {
-                        const txt = cand.innerText ? cand.innerText.trim() : "";
+                        // SỬA TẠI ĐÂY: Thêm cand?.innerText để tuyệt đối không lỗi null
+                        const txt = cand?.innerText ? cand.innerText.trim() : "";
                         if (txt && !ratingWords.includes(txt.toUpperCase()) && txt.length > 1 && !txt.toLowerCase().includes('download')) {
                             title = txt;
                             break;
@@ -142,7 +123,7 @@ async function scrapePluginData(url) {
             }
 
             if (!title) {
-                title = document.title.replace(" - TheoTown", "").trim();
+                title = document.title ? document.title.replace(" - TheoTown", "").trim() : "";
             }
 
             return { title, downloads, rating };
@@ -223,7 +204,7 @@ app.post('/api/plugins/refresh', async (req, res) => {
 });
 
 // --- TỰ ĐỘNG HÓA NHIỆM VỤ CHẠY NGẦM (CRON JOB) ---
-// Hệ thống sẽ tự động quét lại toàn bộ danh sách mỗi 1 tiếng đồng hồ (3600000ms)
+// Hệ thống sẽ tự động quét lại toàn bộ danh sách mỗi 10 phút (10 * 60 * 1000ms)
 setInterval(async () => {
     console.log(`[${new Date().toLocaleTimeString()}] Bắt đầu chu kỳ quét tự động...`);
     let plugins = readData();
