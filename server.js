@@ -72,26 +72,31 @@ async function scrapePluginData(url) {
     let browser;
     try {
         const puppeteer = require('puppeteer');
-        
+
         browser = await puppeteer.launch({
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage', // <-- THÊM DÒNG NÀY: Ép trình duyệt dùng bộ nhớ chung, chống tràn RAM trên Host
+                '--disable-gpu'            // <-- THÊM DÒNG NÀY: Tắt card đồ họa ảo không cần thiết để nhẹ máy
+            ]
         });
-        
+
         const page = await browser.newPage();
         await page.setViewport({ width: 1280, height: 800 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
         // [THAY ĐỔI TẠI ĐÂY]: Tải trang và đợi mạng lưới kết nối tạm lắng xuống
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-        
+
         // [THAY ĐỔI TẠI ĐÂY]: Đợi thêm 2.5 giây để phòng trường hợp trang web chuyển hướng ngầm/vượt Cloudflare thách thức
         await new Promise(resolve => setTimeout(resolve, 2500));
 
         // Thực hiện bóc tách thông minh trực tiếp bên trong DOM của Trình duyệt (Giữ nguyên 100%)
         const extractedData = await page.evaluate(() => {
             const bodyTxt = document.body.innerText || "";
-            
+
             let rating = "N/A";
             let downloads = "N/A";
             let title = "";
@@ -156,7 +161,7 @@ async function scrapePluginData(url) {
     } catch (error) {
         if (browser) await browser.close();
         console.error(`[Scraper Error] Sự cố tại ${url}:`, error.message);
-        
+
         return {
             title: "Lỗi cấu trúc trang",
             downloads: "Thử lại",
