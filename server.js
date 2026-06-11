@@ -26,7 +26,6 @@ const readData = () => {
             return [];
         }
         const content = fs.readFileSync(DATA_FILE, 'utf8').trim();
-        // Nếu file trống trơn thì trả về mảng rỗng, tránh làm sập server
         return content ? JSON.parse(content) : [];
     } catch (error) {
         console.error("⚠️ Phát hiện lỗi đọc file JSON, tự động khôi phục cấu trúc []:", error.message);
@@ -43,8 +42,7 @@ const writeData = (data) => {
 };
 
 // =========================================================================
-// HÀM LÕI CÀO DỮ LIỆU ĐÃ ĐƯỢC THÊM BỘ ĐỆM ĐỢI ĐIỀU HƯỚNG TRÁNH SẬP CONTEXT
-// Đã sửa lỗi đọc thuộc tính trên đối tượng null khi trang tải lỗi/chậm
+// HÀM LÕI CÀO DỮ LIỆU - ĐÃ THÊM CAMERA CHỤP ẢNH MÀN HÌNH ĐỂ CHECK CHẶN BOT
 // =========================================================================
 async function scrapePluginData(url) {
     let browser;
@@ -56,8 +54,8 @@ async function scrapePluginData(url) {
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage', // <-- THÊM DÒNG NÀY: Ép trình duyệt dùng bộ nhớ chung, chống tràn RAM trên Host
-                '--disable-gpu'            // <-- THÊM DÒNG NÀY: Tắt card đồ họa ảo không cần thiết để nhẹ máy
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
             ]
         });
 
@@ -65,15 +63,20 @@ async function scrapePluginData(url) {
         await page.setViewport({ width: 1280, height: 800 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // [THAY ĐỔI TẠI ĐÂY]: Tải trang và đợi mạng lưới kết nối tạm lắng xuống
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(resolve => setTimeout(resolve, 3500)); // Tăng lên 3.5s đợi load kỹ hơn
 
-        // [THAY ĐỔI TẠI ĐÂY]: Đợi thêm 2.5 giây để phòng trường hợp trang web chuyển hướng ngầm/vượt Cloudflare thách thức
-        await new Promise(resolve => setTimeout(resolve, 2500));
+        // 📸 MỚI THÊM: Chụp ảnh màn hình thực tế lưu vào thư mục public để bạn check xem có bị dính Captcha/Cloudflare không
+        try {
+            const publicDir = path.join(__dirname, 'public');
+            if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir);
+            await page.screenshot({ path: path.join(publicDir, 'screenshot.png') });
+            console.log(`[Bằng chứng ảnh] Đã chụp ảnh màn hình lúc cào link: ${url}`);
+        } catch (screenErr) {
+            console.error("Không chụp được ảnh màn hình:", screenErr.message);
+        }
 
-        // Thực hiện bóc tách thông minh trực tiếp bên trong DOM của Trình duyệt (Đã vá lỗi an toàn bằng Optional Chaining)
         const extractedData = await page.evaluate(() => {
-            // SỬA TẠI ĐÂY: Thêm dấu ?. đề phòng document.body bị null khi trang lỗi
             const bodyTxt = document.body?.innerText || "";
 
             let rating = "N/A";
@@ -82,13 +85,11 @@ async function scrapePluginData(url) {
 
             const ratingWords = ["VERY POSITIVE", "POSITIVE", "MIXED", "NEUTRAL", "VERY NEGATIVE", "NEGATIVE"];
 
-            // 1. Trích xuất Đánh giá
             const ratingMatch = bodyTxt.match(/(VERY POSITIVE|POSITIVE|MIXED|NEUTRAL|VERY NEGATIVE|NEGATIVE)/i);
             if (ratingMatch) {
                 rating = ratingMatch[0].toUpperCase();
             }
 
-            // 2. Trích xuất Lượt tải
             const downloadMatch = bodyTxt.match(/(\d{1,3}(,\d{3})*)\s*[\.\-\s]*\s*(VERY POSITIVE|POSITIVE|MIXED|NEUTRAL|VERY NEGATIVE|NEGATIVE)/i);
             if (downloadMatch) {
                 downloads = downloadMatch[1];
@@ -97,11 +98,9 @@ async function scrapePluginData(url) {
                 if (fallbackMatch) downloads = fallbackMatch[1];
             }
 
-            // 3. Trích xuất Tên Plugin thật (DOM Walker)
             let ratingEl = null;
             if (rating !== "N/A") {
                 const allElements = Array.from(document.querySelectorAll('*'));
-                // SỬA TẠI ĐÂY: Thêm el?.innerText đề phòng phần tử không có thuộc tính text
                 ratingEl = allElements.find(el => el && el.children && el.children.length === 0 && el.innerText && el?.innerText?.toUpperCase().trim() === rating);
             }
 
@@ -110,7 +109,6 @@ async function scrapePluginData(url) {
                 for (let i = 0; i < 5 && parent; i++) {
                     const candidates = parent.querySelectorAll('a, h1, h2, h3, h4');
                     for (let cand of candidates) {
-                        // SỬA TẠI ĐÂY: Thêm cand?.innerText để tuyệt đối không lỗi null
                         const txt = cand?.innerText ? cand.innerText.trim() : "";
                         if (txt && !ratingWords.includes(txt.toUpperCase()) && txt.length > 1 && !txt.toLowerCase().includes('download')) {
                             title = txt;
@@ -168,7 +166,6 @@ app.post('/api/plugins', async (req, res) => {
         return res.status(400).json({ error: "Plugin này đã có trong danh sách hệ thống" });
     }
 
-    // Cào thử dữ liệu ngay khi vừa thêm vào để cập nhật bảng lập tức
     const scrapedInfo = await scrapePluginData(url);
     const newPlugin = {
         id: Date.now().toString(),
@@ -196,7 +193,6 @@ app.post('/api/plugins/refresh', async (req, res) => {
     for (let i = 0; i < plugins.length; i++) {
         const updatedInfo = await scrapePluginData(plugins[i].url);
         plugins[i] = { ...plugins[i], ...updatedInfo };
-        // Nghỉ 2 giây giữa mỗi request để chống bị chặn IP (Anti-Bot Rate Limiting)
         await new Promise(resolve => setTimeout(resolve, 2000));
     }
     writeData(plugins);
@@ -204,7 +200,6 @@ app.post('/api/plugins/refresh', async (req, res) => {
 });
 
 // --- TỰ ĐỘNG HÓA NHIỆM VỤ CHẠY NGẦM (CRON JOB) ---
-// Hệ thống sẽ tự động quét lại toàn bộ danh sách mỗi 10 phút (10 * 60 * 1000ms)
 setInterval(async () => {
     console.log(`[${new Date().toLocaleTimeString()}] Bắt đầu chu kỳ quét tự động...`);
     let plugins = readData();
