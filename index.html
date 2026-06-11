@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TheoTown Plugin Monitor Panel</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
+    <div class="max-w-6xl mx-auto px-4 py-8">
+        <div class="flex flex-col md:flex-row justify-between items-center border-b border-gray-800 pb-6 mb-8 gap-4">
+            <div>
+                <h1 class="text-3xl font-bold text-emerald-400">TheoTown Plugin Monitor</h1>
+                <p class="text-gray-400 mt-1">Hệ thống theo dõi tự động số lượng lượt tải xuống và trạng thái đánh giá forum.</p>
+            </div>
+            <button onclick="refreshAll()" id="btnRefresh" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-5 py-2.5 rounded-lg transition-colors shadow-lg shadow-emerald-900/20 cursor-pointer">
+                Làm mới toàn bộ dữ liệu
+            </button>
+        </div>
+
+        <div class="bg-gray-800 rounded-xl p-6 mb-8 border border-gray-700 shadow-xl">
+            <h2 class="text-lg font-semibold mb-4 text-gray-200">Thêm Plugin Mới Cần Theo Dõi</h2>
+            <form id="addForm" class="flex flex-col sm:flex-row gap-3">
+                <input type="url" id="pluginUrl" required placeholder="Dán link danh sách/đường dẫn chi tiết của plugin trên forum TheoTown vào đây..." 
+                       class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 text-gray-200 focus:outline-none focus:border-emerald-500 placeholder-gray-500">
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-lg font-medium transition-colors whitespace-nowrap cursor-pointer">
+                    + Thêm vào danh sách
+                </button>
+            </form>
+        </div>
+
+        <div class="bg-gray-800 rounded-xl border border-gray-700 shadow-xl overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-700/50 text-gray-300 text-sm font-semibold uppercase tracking-wider border-b border-gray-700">
+                            <th class="p-4">Tên Plugin / Đường dẫn</th>
+                            <th class="p-4">Lượt tải về</th>
+                            <th class="p-4">Đánh giá</th>
+                            <th class="p-4">Trạng thái kết nối</th>
+                            <th class="p-4">Cập nhật cuối</th>
+                            <th class="p-4 text-center">Hành động</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pluginsTableBody" class="divide-y divide-gray-700/60 text-sm">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Gọi tải lại danh sách plugin ngay khi vừa mở trang dashboard lên
+        document.addEventListener('DOMContentLoaded', fetchPlugins);
+        document.getElementById('addForm').addEventListener('submit', addPlugin);
+
+        async function fetchPlugins() {
+            const res = await fetch('/api/plugins');
+            const data = await res.json();
+            const tbody = document.getElementById('pluginsTableBody');
+            tbody.innerHTML = '';
+
+            if (data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-gray-500">Hiện tại chưa có link plugin nào được cấu hình theo dõi. Hãy thêm link ở trên!</td></tr>`;
+                return;
+            }
+
+            data.forEach(p => {
+                tbody.innerHTML += `
+                    <tr class="hover:bg-gray-700/30 transition-colors">
+                        <td class="p-4 font-medium max-w-xs truncate">
+                            <a href="${p.url}" target="_blank" class="text-blue-400 hover:underline block">${p.title}</a>
+                            <span class="text-xs text-gray-500 block truncate mt-0.5">${p.url}</span>
+                        </td>
+                        <td class="p-4 text-emerald-400 font-bold">${p.downloads}</td>
+                        <td class="p-4"><span class="px-2 py-1 rounded text-xs font-semibold bg-gray-900 text-amber-400">${p.rating}</span></td>
+                        <td class="p-4"><span class="text-xs">${p.status}</span></td>
+                        <td class="p-4 text-gray-400 text-xs">${p.lastUpdated}</td>
+                        <td class="p-4 text-center">
+                            <button onclick="deletePlugin('${p.id}')" class="text-red-400 hover:text-red-300 font-medium cursor-pointer">Xóa</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        async function addPlugin(e) {
+            e.preventDefault();
+            const urlInput = document.getElementById('pluginUrl');
+            const url = urlInput.value;
+
+            const res = await fetch('/api/plugins', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+
+            if(res.ok) {
+                urlInput.value = '';
+                fetchPlugins();
+            } else {
+                const err = await res.json();
+                alert(err.error || 'Có lỗi xảy ra khi thêm URL');
+            }
+        }
+
+        async function deletePlugin(id) {
+            if (confirm('Bạn có chắc chắn muốn ngừng theo dõi plugin này không?')) {
+                await fetch(`/api/plugins/${id}`, { method: 'DELETE' });
+                fetchPlugins();
+            }
+        }
+
+        async function refreshAll() {
+            const btn = document.getElementById('btnRefresh');
+            btn.disabled = true;
+            btn.innerText = 'Đang đồng bộ quét web...';
+            btn.classList.add('opacity-50');
+
+            await fetch('/api/plugins/refresh', { method: 'POST' });
+            
+            btn.disabled = false;
+            btn.innerText = 'Làm mới toàn bộ dữ liệu';
+            btn.classList.remove('opacity-50');
+            fetchPlugins();
+        }
+    </script>
+</body>
+</html>
